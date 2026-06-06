@@ -1,0 +1,51 @@
+# ── Core NLP & Parsing ───────────────────────────────────────────────
+spacy>=3.7.0
+pdfplumber>=0.10.3
+pymupdf>=1.23.0
+python-docx>=1.1.0
+
+# ── Semantic AI (local embeddings — always required) ─────────────────
+sentence-transformers>=2.6.0
+faiss-cpu>=1.7.4
+rank-bm25>=0.2.2
+
+# ── Streamlit UI ─────────────────────────────────────────────────────
+streamlit>=1.35.0
+plotly>=5.22.0
+pandas>=2.2.0
+
+# ── Utilities ─────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+httpx>=0.27.0
+numpy>=1.26.0
+scikit-learn>=1.4.0
+
+# ═════════════════════════════════════════════════════════════════════
+# BACKEND 1: Ollama  (default — easiest setup)
+# Install Ollama separately from https://ollama.com
+# then: pip install ollama
+# ═════════════════════════════════════════════════════════════════════
+ollama>=0.2.0
+
+# ═════════════════════════════════════════════════════════════════════
+# BACKEND 2: HuggingFace Transformers  (fully local, no API)
+# Set LLM_BACKEND = "huggingface" in config.py
+# ═════════════════════════════════════════════════════════════════════
+transformers>=4.40.0
+torch>=2.1.0
+accelerate>=0.28.0
+bitsandbytes>=0.43.0          # 4-bit / 8-bit quantisation (GPU)
+# tokenizers>=0.19.0          # usually installed by transformers
+
+# ═════════════════════════════════════════════════════════════════════
+# BACKEND 3: Fine-tuned model (LoRA / QLoRA adapter or merged model)
+# Set LLM_BACKEND = "finetuned" in config.py
+# ═════════════════════════════════════════════════════════════════════
+peft>=0.10.0                  # LoRA / QLoRA adapter loading
+
+# ── Optional: PDF export ──────────────────────────────────────────────
+# wkhtmltopdf must be installed separately on the OS:
+#   Ubuntu/Debian:  sudo apt-get install wkhtmltopdf
+#   macOS:          brew install wkhtmltopdf
+#   Windows:        https://wkhtmltopdf.org/downloads.html
