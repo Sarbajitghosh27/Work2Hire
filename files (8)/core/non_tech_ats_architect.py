@@ -41,6 +41,7 @@ from typing import List, Dict, Optional, Tuple
 
 from core.resume_parser import ParsedResume, WorkExperience, Project
 from core.jd_engine import ParsedJD
+from config import canonical_skill_name
 
 logger = logging.getLogger(__name__)
 
@@ -255,9 +256,10 @@ def _identify_transferable_skills(resume: ParsedResume, background_domain: str) 
     seen = set()
     unique = []
     for s in transferable:
-        if s.lower() not in seen:
-            seen.add(s.lower())
-            unique.append(s)
+        s_cap = canonical_skill_name(s)
+        if s_cap.lower() not in seen:
+            seen.add(s_cap.lower())
+            unique.append(s_cap)
 
     return unique[:15]
 
@@ -297,7 +299,7 @@ def _recommend_da_skills(
         if skill not in recommended:
             recommended.append(skill)
 
-    return recommended[:20]
+    return [canonical_skill_name(s) for s in recommended[:20]]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -810,9 +812,10 @@ def _reframe_skills_for_da(
     seen = set()
     result = []
     for s in combined:
-        if s.lower() not in seen:
-            seen.add(s.lower())
-            result.append(s)
+        s_cap = canonical_skill_name(s)
+        if s_cap.lower() not in seen:
+            seen.add(s_cap.lower())
+            result.append(s_cap)
 
     return result[:30]
 

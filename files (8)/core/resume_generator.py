@@ -12,10 +12,15 @@ import html as _html
 import subprocess
 import tempfile
 import os
+import logging
 from dataclasses import dataclass, field
 from typing import List
 
 from core.enhancement_engine import EnhancedResume
+from config import canonical_skill_name
+
+logger = logging.getLogger(__name__)
+
 
 
 def _e(text) -> str:
@@ -32,6 +37,88 @@ def _link(url: str, label: str = "") -> str:
     return f'<a href="{_e(url)}" target="_blank">{disp}</a>'
 
 
+def is_valid_certification(c: str) -> bool:
+    c_low = c.lower().strip()
+    if len(c) > 100 or len(c.split()) > 12:
+        return False
+    banned_keywords = [
+        "does not list",
+        "no certifications",
+        "no separate certifications",
+        "however, it does include",
+        "not specify certifications",
+        "not list certifications",
+        "no online courses",
+        "does not specify",
+        "no formal certifications",
+        "n/a",
+        "none",
+        "not applicable",
+        "available upon request",
+        "refer to",
+        "see project",
+        "no direct certifications",
+        "not yet certified",
+        "has not listed",
+        "does not have",
+        "not listed",
+        "no separate",
+        "no online",
+        "will be provided",
+        "explanatory text",
+        "source document",
+        "explicitly mentioned",
+        "no direct",
+        "no certifications are",
+        "refer to ",
+        "nil"
+    ]
+    for kw in banned_keywords:
+        if kw in c_low:
+            return False
+    return True
+
+
+def is_valid_accomplishment(a: str) -> bool:
+    a_low = a.lower().strip()
+    if len(a) > 150 or len(a.split()) > 20:
+        return False
+    banned_keywords = [
+        "does not list",
+        "no accomplishments",
+        "no separate accomplishments",
+        "no achievements",
+        "no awards",
+        "however, it does include",
+        "not specify accomplishments",
+        "not list accomplishments",
+        "does not specify",
+        "no formal accomplishments",
+        "no formal achievements",
+        "n/a",
+        "none",
+        "not applicable",
+        "available upon request",
+        "refer to",
+        "see project",
+        "no direct achievements",
+        "no direct accomplishments",
+        "has not listed",
+        "does not have",
+        "not listed",
+        "will be provided",
+        "explanatory text",
+        "source document",
+        "explicitly mentioned",
+        "nil"
+    ]
+    for kw in banned_keywords:
+        if kw in a_low:
+            return False
+    return True
+
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HTML SECTIONS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -39,19 +126,49 @@ def _link(url: str, label: str = "") -> str:
 def _header(e: EnhancedResume) -> str:
     name = _e(e.name or "Your Name")
     contact_parts = []
+    
+    phone_svg = '<svg viewBox="0 0 24 24" class="icon" xmlns="http://www.w3.org/2000/svg"><path d="M6.62 10.79a15.15 15.15 0 0 0 6.57 6.57l2.2-2.2a1 1 0 0 1 .76-.29c1.07.12 2.18.12 3.23-.23a1 1 0 0 1 1.25.95v3.42a1 1 0 0 1-1.07 1A17 17 0 0 1 3 4.07a1 1 0 0 1 1-1.07h3.42a1 1 0 0 1 .95 1.25c-.35 1.05-.35 2.16-.23 3.23a1 1 0 0 1-.29.76l-2.2 2.2z"/></svg>'
+    email_svg = '<svg viewBox="0 0 24 24" class="icon" xmlns="http://www.w3.org/2000/svg"><path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/></svg>'
+    linkedin_svg = '<svg viewBox="0 0 24 24" class="icon" xmlns="http://www.w3.org/2000/svg"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.32 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.79M6.88 8.56a1.68 1.68 0 0 0 1.68-1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93.76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37h2.77z"/></svg>'
+    github_svg = '<svg viewBox="0 0 24 24" class="icon" xmlns="http://www.w3.org/2000/svg"><path d="M12 2A10 10 0 0 0 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.9-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.52 2.34 1.07 2.91.83.1-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0 0 12 2z"/></svg>'
+    portfolio_svg = '<svg viewBox="0 0 24 24" class="icon" xmlns="http://www.w3.org/2000/svg"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></svg>'
+
+    import re
     if e.phone:
-        contact_parts.append(f'<span>📱 {_e(e.phone)}</span>')
+        disp_phone = re.sub(r"[^\d+\s()-]", "", e.phone).strip()
+        clean_phone = re.sub(r"[^\d+]", "", e.phone)
+        if disp_phone:
+            contact_parts.append(f'<a href="tel:{_e(clean_phone)}">{phone_svg}{_e(disp_phone)}</a>')
     if e.email:
-        contact_parts.append(f'<a href="mailto:{_e(e.email)}">✉ {_e(e.email)}</a>')
+        disp_email = re.sub(r"[^\w@.+-]", "", e.email).strip()
+        if disp_email:
+            contact_parts.append(f'<a href="mailto:{_e(disp_email)}">{email_svg}{_e(disp_email)}</a>')
     if e.linkedin:
         li = e.linkedin.replace("https://","").replace("http://","").replace("www.","")
-        contact_parts.append(f'<a href="{_e(e.linkedin)}" target="_blank">in {_e(li)}</a>')
+        li = re.sub(r"^[^a-zA-Z0-9]+", "", li).strip()
+        if li.lower().startswith("in "):
+            li = li[3:].strip()
+        li_url = e.linkedin.strip()
+        if not li_url.startswith("http"):
+            li_url = "https://" + li_url
+        if li:
+            contact_parts.append(f'<a href="{_e(li_url)}" target="_blank">{linkedin_svg}{_e(li)}</a>')
     if e.github:
         gh = e.github.replace("https://","").replace("http://","").replace("www.","")
-        contact_parts.append(f'<a href="{_e(e.github)}" target="_blank">⌥ {_e(gh)}</a>')
+        gh = re.sub(r"^[^a-zA-Z0-9]+", "", gh).strip()
+        gh_url = e.github.strip()
+        if not gh_url.startswith("http"):
+            gh_url = "https://" + gh_url
+        if gh:
+            contact_parts.append(f'<a href="{_e(gh_url)}" target="_blank">{github_svg}{_e(gh)}</a>')
     if getattr(e, "portfolio", None):
         pf = e.portfolio.replace("https://","").replace("http://","").replace("www.","")
-        contact_parts.append(f'<a href="{_e(e.portfolio)}" target="_blank">🔗 {_e(pf)}</a>')
+        pf = re.sub(r"^[^a-zA-Z0-9]+", "", pf).strip()
+        pf_url = e.portfolio.strip()
+        if not pf_url.startswith("http"):
+            pf_url = "https://" + pf_url
+        if pf:
+            contact_parts.append(f'<a href="{_e(pf_url)}" target="_blank">{portfolio_svg}{_e(pf)}</a>')
 
     contact_line = " &nbsp;|&nbsp; ".join(contact_parts)
     return f"""
@@ -120,7 +237,7 @@ def _projects(e: EnhancedResume) -> str:
     items = []
     for proj in e.enhanced_projects:
         name    = _e(proj.name or "")
-        tech    = ", ".join(_e(t) for t in proj.tech_used if t)
+        tech    = ", ".join(_e(canonical_skill_name(t)) for t in proj.tech_used if t)
         desc    = _e(proj.description or "")
         outcome = _e(proj.outcome or "")
         link_html = (f' <span class="proj-link">— {_link(proj.link, "link")}</span>'
@@ -136,7 +253,7 @@ def _projects(e: EnhancedResume) -> str:
   <div class="job">
     <div class="job-header">
       <span class="job-title">{name}{link_html}</span>
-      <span class="job-date"></span>
+      <span class="job-date">{_e(proj.duration or "")}</span>
     </div>
     {f'<div class="proj-tech">Tech Stack: {tech}</div>' if tech else ""}
     {"<ul>" + content + "</ul>" if content else ""}
@@ -152,14 +269,15 @@ def _skills(e: EnhancedResume) -> str:
     if not e.enhanced_skills:
         return ""
 
-    # Case-insensitive dedup before rendering
+    # Case-insensitive dedup before rendering + apply capitalization
     seen: set = set()
     skills: list = []
     for s in e.enhanced_skills:
-        key = s.lower().strip()
+        s_cap = canonical_skill_name(s)
+        key = s_cap.lower().strip()
         if key and key not in seen:
             seen.add(key)
-            skills.append(s)
+            skills.append(s_cap)
 
     # Group into logical buckets for a clean, ATS-friendly layout
     LANGUAGES_KW = {
@@ -367,7 +485,7 @@ def _education(e: EnhancedResume) -> str:
 
 
 def _accomplishments(e: EnhancedResume) -> str:
-    items = [a for a in e.accomplishments if a and len(a) > 5]
+    items = [a for a in e.accomplishments if a and len(a) > 5 and is_valid_accomplishment(a)]
     if not items:
         return ""
     li = "".join(f"<li>{_e(a)}</li>" for a in items)
@@ -379,7 +497,7 @@ def _accomplishments(e: EnhancedResume) -> str:
 
 
 def _certifications(e: EnhancedResume) -> str:
-    items = [c for c in e.certifications if c and len(c) > 3]
+    items = [c for c in e.certifications if c and len(c) > 3 and is_valid_certification(c)]
     if not items:
         return ""
     li = "".join(f"<li>{_e(c)}</li>" for c in items)
@@ -406,312 +524,115 @@ def _publications(e: EnhancedResume) -> str:
 # CSS — Jitin Nair template style
 # ══════════════════════════════════════════════════════════════════════════════
 
-CSS = """
+def generate_dynamic_css(p: dict) -> str:
+    return f"""
 /* @page margin:0 — we own ALL whitespace via body padding. */
-@page { size: A4 portrait; margin: 0; }
+@page {{ size: A4 portrait; margin: 0; }}
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
 
-html { width: 210mm; }
+html {{ width: 210mm; }}
 
-body {
+body {{
   font-family: "Times New Roman", Times, serif;
-  font-size: 11pt;
+  font-size: {p["body_font_size"]}pt;
   color: #000;
   background: #fff;
   width: 210mm;
   height: 297mm;
-  padding: 10mm 14mm 8mm 14mm;
-  line-height: 1.38;
+  padding: {p["body_padding_top"]}mm {p["body_padding_horizontal"]}mm {p["body_padding_bottom"]}mm {p["body_padding_horizontal"]}mm;
+  line-height: {p["body_line_height"]};
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
   overflow: hidden;
-}
+}}
 
 /* Header */
-.header { text-align: center; margin-bottom: 6.5pt; }
-.name {
-  font-size: 22pt;
+.header {{ text-align: center; margin-bottom: {p["header_margin_bottom"]}pt; }}
+.name {{
+  font-size: {p["name_font_size"]}pt;
   font-weight: bold;
   font-variant: small-caps;
   letter-spacing: 0.6px;
   margin-bottom: 2pt;
-}
-.contact { font-size: 9.8pt; color: #111; }
-.contact a { color: #002266; text-decoration: none; }
-.contact span { color: #111; }
+}}
+.contact {{ font-size: 9.8pt; color: #111; }}
+.contact a {{ color: #002266; text-decoration: none; }}
+.contact span {{ color: #111; }}
+.icon {{
+  width: 9.8pt;
+  height: 9.8pt;
+  vertical-align: -1.2pt;
+  fill: currentColor;
+  display: inline-block;
+  margin-right: 3.5pt;
+}}
 
 /* Sections */
-.section { margin-bottom: 5.5pt; }
-.section-title {
-  font-size: 11.5pt;
+.section {{ margin-bottom: {p["section_margin_bottom"]}pt; }}
+.section-title {{
+  font-size: {p["section_title_font_size"]}pt;
   font-variant: small-caps;
   font-weight: bold;
-  border-bottom: 1.2pt solid #000;
-  padding-bottom: 1.2pt;
-  margin-bottom: 3.5pt;
+  border-bottom: {p.get("section_title_border_width", 1.2)}pt solid #000;
+  padding-bottom: {p["section_title_padding_bottom"]}pt;
+  margin-bottom: {p["section_title_margin_bottom"]}pt;
   letter-spacing: 0.4px;
-}
+}}
 
 /* Summary */
-.summary-text { font-size: 10.2pt; margin-left: 2mm; text-align: justify; line-height: 1.38; }
+.summary-text {{ font-size: {p["summary_font_size"]}pt; margin-left: 2mm; text-align: justify; line-height: {p["summary_line_height"]}; }}
 
 /* Jobs / Projects */
-.job { margin-bottom: 4.5pt; margin-left: 2mm; page-break-inside: avoid; }
-.job-header { display: flex; justify-content: space-between; align-items: baseline; }
-.job-title  { font-weight: bold; font-size: 11pt; }
-.job-date   { font-size: 9.8pt; white-space: nowrap; margin-left: 8pt; }
-.proj-tech  { font-size: 9.2pt; font-style: italic; margin: 1.5pt 0; }
-.proj-link  { font-weight: normal; font-size: 9.2pt; }
-.proj-link a { color: #002266; }
+.job {{ margin-bottom: {p["job_margin_bottom"]}pt; margin-left: 2mm; page-break-inside: avoid; }}
+.job-header {{ display: flex; justify-content: space-between; align-items: baseline; }}
+.job-title  {{ font-weight: bold; font-size: {p["job_title_font_size"]}pt; }}
+.job-date   {{ font-size: {p["job_date_font_size"]}pt; white-space: nowrap; margin-left: 8pt; }}
+.proj-tech  {{ font-size: {p["proj_tech_font_size"]}pt; font-style: italic; margin: 1.5pt 0; }}
+.proj-link  {{ font-weight: normal; font-size: 9.2pt; }}
+.proj-link a {{ color: #002266; }}
 
 /* Lists */
-ul { padding-left: 4.5mm; margin-top: 1.5pt; list-style-type: none; }
-ul li {
-  font-size: 10.2pt;
-  margin-bottom: 1.8pt;
+ul {{ padding-left: 4.5mm; margin-top: 1.5pt; list-style-type: none; }}
+ul li {{
+  font-size: {p["list_item_font_size"]}pt;
+  margin-bottom: {p["list_item_margin_bottom"]}pt;
   position: relative;
   padding-left: 2.5mm;
-  line-height: 1.38;
-}
-ul li::before { content: "\u2013"; position: absolute; left: 0; }
+  line-height: {p["body_line_height"]};
+}}
+ul li::before {{ content: "\\2013"; position: absolute; left: 0; }}
 
 /* Skills */
-.skills-list { list-style: none; padding-left: 2mm; }
-.skills-list li::before { content: ""; }
-.skills-list li { font-size: 10.2pt; margin-bottom: 1.8pt; line-height: 1.38; }
+.skills-list {{ list-style: none; padding-left: 2mm; }}
+.skills-list li::before {{ content: ""; }}
+.skills-list li {{ font-size: {p["list_item_font_size"]}pt; margin-bottom: {p["list_item_margin_bottom"]}pt; line-height: {p["body_line_height"]}; }}
 
 /* Education */
-.edu-table { margin-left: 2mm; }
-.edu-row { display: flex; gap: 8pt; margin-bottom: 3.5pt; font-size: 10.2pt; line-height: 1.38; }
-.edu-row span:first-child { min-width: 75pt; font-weight: bold; }
+.edu-table {{ margin-left: 2mm; }}
+.edu-row {{ display: flex; gap: 8pt; margin-bottom: {p["edu_row_margin_bottom"]}pt; font-size: {p["edu_row_font_size"]}pt; line-height: {p["body_line_height"]}; }}
+.edu-row span:first-child {{ min-width: 75pt; font-weight: bold; }}
 
 /* Screen preview */
-@media screen {
-  body { margin: 20px auto; box-shadow: 0 2px 20px rgba(0,0,0,0.20); }
-}
+@media screen {{
+  body {{ margin: 20px auto; box-shadow: 0 2px 20px rgba(0,0,0,0.20); overflow: auto !important; }}
+}}
+
 
 /* Print */
-@media print {
-  body { margin: 0; box-shadow: none; height: 297mm; overflow: hidden; }
-  body.two-page { height: auto !important; overflow: visible !important; }
-  a { color: #000 !important; }
-  .job { page-break-inside: avoid; }
-}
+@media print {{
+  body {{ margin: 0; box-shadow: none; height: 297mm; overflow: hidden; }}
+  body.two-page {{ height: auto !important; overflow: visible !important; }}
+  a {{ color: #000 !important; }}
+  .job {{ page-break-inside: avoid; }}
+}}
 
 /* Two-page support */
-body.two-page {
+body.two-page {{
   height: auto !important;
   overflow: visible !important;
-}
-
-/* Dense Layout overrides */
-body.dense-layout {
-  font-size: 10pt !important;
-  padding: 6mm 10mm 4mm 10mm !important;
-  line-height: 1.25 !important;
-}
-body.dense-layout .header {
-  margin-bottom: 4pt !important;
-}
-body.dense-layout .name {
-  font-size: 18pt !important;
-}
-body.dense-layout .section {
-  margin-bottom: 3.5pt !important;
-}
-body.dense-layout .section-title {
-  font-size: 10.5pt !important;
-  padding-bottom: 0.8pt !important;
-  margin-bottom: 2pt !important;
-}
-body.dense-layout .summary-text {
-  font-size: 9.2pt !important;
-  line-height: 1.25 !important;
-}
-body.dense-layout .job {
-  margin-bottom: 2.5pt !important;
-}
-body.dense-layout .job-title {
-  font-size: 10pt !important;
-}
-body.dense-layout .job-date {
-  font-size: 9pt !important;
-}
-body.dense-layout ul li {
-  font-size: 9.2pt !important;
-  margin-bottom: 1.0pt !important;
-  line-height: 1.25 !important;
-}
-body.dense-layout .skills-list li {
-  font-size: 9.2pt !important;
-  margin-bottom: 1.0pt !important;
-  line-height: 1.25 !important;
-}
-body.dense-layout .edu-row {
-  margin-bottom: 2pt !important;
-  font-size: 9.2pt !important;
-  line-height: 1.25 !important;
-}
-
-/* Loose Layout overrides */
-body.loose-layout {
-  font-size: 11.5pt !important;
-  padding: 14mm 16mm 12mm 16mm !important;
-  line-height: 1.45 !important;
-}
-body.loose-layout .header {
-  margin-bottom: 10pt !important;
-}
-body.loose-layout .name {
-  font-size: 24pt !important;
-}
-body.loose-layout .section {
-  margin-bottom: 10pt !important;
-}
-body.loose-layout .section-title {
-  font-size: 12.5pt !important;
-  padding-bottom: 2.0pt !important;
-  margin-bottom: 6.0pt !important;
-}
-body.loose-layout .summary-text {
-  font-size: 10.8pt !important;
-  line-height: 1.45 !important;
-}
-body.loose-layout .job {
-  margin-bottom: 8.0pt !important;
-}
-body.loose-layout .job-title {
-  font-size: 11.5pt !important;
-}
-body.loose-layout .job-date {
-  font-size: 10.5pt !important;
-}
-body.loose-layout .proj-tech {
-  font-size: 9.8pt !important;
-}
-body.loose-layout ul li {
-  font-size: 10.8pt !important;
-  margin-bottom: 3.0pt !important;
-  line-height: 1.45 !important;
-}
-body.loose-layout .skills-list li {
-  font-size: 10.8pt !important;
-  margin-bottom: 3.0pt !important;
-  line-height: 1.45 !important;
-}
-body.loose-layout .edu-row {
-  margin-bottom: 5pt !important;
-  font-size: 10.8pt !important;
-  line-height: 1.45 !important;
-}
-
-/* Super-Dense Layout overrides */
-body.super-dense-layout {
-  font-size: 9pt !important;
-  padding: 4mm 8mm 3mm 8mm !important;
-  line-height: 1.15 !important;
-}
-body.super-dense-layout .header {
-  margin-bottom: 2.5pt !important;
-}
-body.super-dense-layout .name {
-  font-size: 15pt !important;
-}
-body.super-dense-layout .section {
-  margin-bottom: 2.0pt !important;
-}
-body.super-dense-layout .section-title {
-  font-size: 9.5pt !important;
-  padding-bottom: 0.5pt !important;
-  margin-bottom: 1.0pt !important;
-  border-bottom-width: 0.8pt !important;
-}
-body.super-dense-layout .summary-text {
-  font-size: 8.5pt !important;
-  line-height: 1.15 !important;
-}
-body.super-dense-layout .job {
-  margin-bottom: 1.5pt !important;
-}
-body.super-dense-layout .job-title {
-  font-size: 9pt !important;
-}
-body.super-dense-layout .job-date {
-  font-size: 8pt !important;
-}
-body.super-dense-layout .proj-tech {
-  font-size: 7.8pt !important;
-}
-body.super-dense-layout ul li {
-  font-size: 8.5pt !important;
-  margin-bottom: 0.5pt !important;
-  line-height: 1.15 !important;
-}
-body.super-dense-layout .skills-list li {
-  font-size: 8.5pt !important;
-  margin-bottom: 0.5pt !important;
-  line-height: 1.15 !important;
-}
-body.super-dense-layout .edu-row {
-  margin-bottom: 1pt !important;
-  font-size: 8.5pt !important;
-  line-height: 1.15 !important;
-}
-/* Expanded Layout overrides */
-body.expanded-layout {
-  font-size: 12pt !important;
-  padding: 20mm 18mm 18mm 18mm !important;
-  line-height: 1.5 !important;
-}
-body.expanded-layout .header {
-  margin-bottom: 14pt !important;
-}
-body.expanded-layout .name {
-  font-size: 28pt !important;
-}
-body.expanded-layout .section {
-  margin-bottom: 14pt !important;
-}
-body.expanded-layout .section-title {
-  font-size: 14pt !important;
-  padding-bottom: 2.5pt !important;
-  margin-bottom: 8.0pt !important;
-}
-body.expanded-layout .summary-text {
-  font-size: 11.5pt !important;
-  line-height: 1.5 !important;
-}
-body.expanded-layout .job {
-  margin-bottom: 11.0pt !important;
-}
-body.expanded-layout .job-title {
-  font-size: 12pt !important;
-}
-body.expanded-layout .job-date {
-  font-size: 11pt !important;
-}
-body.expanded-layout .proj-tech {
-  font-size: 10.5pt !important;
-}
-body.expanded-layout ul li {
-  font-size: 11.2pt !important;
-  margin-bottom: 4.5pt !important;
-  line-height: 1.5 !important;
-}
-body.expanded-layout .skills-list li {
-  font-size: 11.2pt !important;
-  margin-bottom: 4.5pt !important;
-  line-height: 1.5 !important;
-}
-body.expanded-layout .edu-row {
-  margin-bottom: 7pt !important;
-  font-size: 11.2pt !important;
-  line-height: 1.5 !important;
-}
+}}
 """
-
-
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -755,19 +676,16 @@ def generate_html_resume(enhanced: EnhancedResume) -> str:
 
     body = "\n".join(parts)
     
-    layout_style = getattr(enhanced, "layout_style", "normal")
-    body_classes = []
-    if layout_style == "dense":
-        body_classes.append("dense-layout")
-    elif layout_style == "super_dense":
-        body_classes.append("super-dense-layout")
-    elif layout_style == "loose":
-        body_classes.append("loose-layout")
-    elif layout_style == "expanded":
-        body_classes.append("expanded-layout")
-    elif getattr(enhanced, "use_dense_spacing", False):
-        body_classes.append("dense-layout")
+    # Retrieve dynamic layout parameters from the compression agent if present
+    layout_params = getattr(enhanced, "layout_params", None)
+    if not layout_params:
+        # Fallback to normal layout parameters
+        from core.compression_agent import LAYOUTS
+        layout_params = LAYOUTS["normal"]
         
+    compiled_css = generate_dynamic_css(layout_params)
+    
+    body_classes = []
     if getattr(enhanced, "is_two_page", False):
         body_classes.append("two-page")
     body_class = " ".join(body_classes)
@@ -778,7 +696,7 @@ def generate_html_resume(enhanced: EnhancedResume) -> str:
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{_e(enhanced.name)} — Resume</title>
-<style>{CSS}</style>
+<style>{compiled_css}</style>
 </head>
 <body class="{body_class}">
 {body}
@@ -790,18 +708,83 @@ def generate_html_resume(enhanced: EnhancedResume) -> str:
 # PDF GENERATION via wkhtmltopdf
 # ══════════════════════════════════════════════════════════════════════════════
 
+def get_chromium_browser_path() -> str:
+    import platform
+    system = platform.system()
+    if system == "Windows":
+        paths = [
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LocalAppData%\Google\Chrome\Application\chrome.exe")
+        ]
+        for p in paths:
+            if os.path.exists(p):
+                return p
+    elif system == "Darwin":
+        paths = [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"
+        ]
+        for p in paths:
+            if os.path.exists(p):
+                return p
+    else: # Linux
+        paths = [
+            "/usr/bin/google-chrome",
+            "/usr/bin/microsoft-edge",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/chromium"
+        ]
+        for p in paths:
+            if os.path.exists(p):
+                return p
+    return None
+
+
 def html_to_pdf_bytes(html: str) -> bytes:
     """
-    Converts HTML string to PDF bytes using wkhtmltopdf.
-    Returns PDF bytes or raises RuntimeError if wkhtmltopdf not found.
+    Converts HTML string to PDF bytes.
+    First tries Edge or Chrome in headless mode (very high fidelity, default on Windows/Mac).
+    Falls back to wkhtmltopdf if no browser is found or if browser print fails.
     """
+    html_path = None
+    pdf_path = None
+    temp_user_data_dir = None
+    
     try:
-        with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w", encoding="utf-8") as f:
-            f.write(html)
-            html_path = f.name
-
+        # Create unique temp files in a safe location (mkstemp closes descriptor to avoid Win sharing lock)
+        fd_html, html_path = tempfile.mkstemp(suffix=".html")
+        os.close(fd_html)
         pdf_path = html_path.replace(".html", ".pdf")
-
+        
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(html)
+            
+        # Try browser print first
+        browser_path = get_chromium_browser_path()
+        if browser_path:
+            # Create a temporary user data directory to prevent profile locking issues on Windows
+            temp_user_data_dir = tempfile.mkdtemp(prefix="chrome_profile_")
+            cmd = [
+                browser_path,
+                "--headless",
+                "--disable-gpu",
+                f"--print-to-pdf={pdf_path}",
+                f"--user-data-dir={temp_user_data_dir}",
+                "--no-margins",
+                html_path
+            ]
+            try:
+                result = subprocess.run(cmd, capture_output=True, timeout=20)
+                if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                    with open(pdf_path, "rb") as f:
+                        return f.read()
+            except Exception as e:
+                logger.warning(f"Browser PDF generation failed, falling back to wkhtmltopdf: {e}")
+                
+        # Fallback to wkhtmltopdf
         cmd = [
             "wkhtmltopdf",
             "--page-size", "A4",
@@ -815,26 +798,31 @@ def html_to_pdf_bytes(html: str) -> bytes:
             pdf_path,
         ]
         result = subprocess.run(cmd, capture_output=True, timeout=30)
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"wkhtmltopdf failed:\n{result.stderr.decode()}"
-            )
-
-        with open(pdf_path, "rb") as f:
-            pdf_bytes = f.read()
-
-        return pdf_bytes
-
-    except FileNotFoundError:
+        if result.returncode == 0 and os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+            with open(pdf_path, "rb") as f:
+                return f.read()
+                
         raise RuntimeError(
-            "wkhtmltopdf not found.\n"
-            "Install: sudo apt-get install wkhtmltopdf\n"
-            "Or on Windows: https://wkhtmltopdf.org/downloads.html"
+            f"PDF generation failed. Headless browser and wkhtmltopdf both failed.\n"
+            f"Browser path: {browser_path}\n"
+            f"wkhtmltopdf output: {result.stderr.decode() if 'result' in locals() else 'N/A'}"
         )
+        
+    except Exception as e:
+        raise RuntimeError(f"Failed to generate PDF: {e}")
+        
     finally:
         for p in [html_path, pdf_path]:
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+        if temp_user_data_dir and os.path.exists(temp_user_data_dir):
+            import shutil
             try:
-                os.unlink(p)
+                shutil.rmtree(temp_user_data_dir)
             except Exception:
                 pass
+
+

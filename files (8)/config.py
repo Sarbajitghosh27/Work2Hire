@@ -619,3 +619,61 @@ OPTIMIZATION_TARGET_SCORE = 0.90
 OPTIMIZATION_MAX_ITERATIONS = 3
 OPTIMIZATION_MIN_AUTHENTICITY = 75.0
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Capitalization & Canonicalization Map for Technical Skills and Technologies
+# ──────────────────────────────────────────────────────────────────────────────
+TECH_CAPITALIZATION_MAP = {
+    "aws": "AWS", "gcp": "GCP", "azure": "Azure", "ec2": "EC2", "s3": "S3", "rds": "RDS", 
+    "ci/cd": "CI/CD", "html": "HTML", "css": "CSS", "sql": "SQL", "mysql": "MySQL", 
+    "postgresql": "PostgreSQL", "sqlite": "SQLite", "mongodb": "MongoDB", "redis": "Redis", 
+    "elasticsearch": "Elasticsearch", "dynamodb": "DynamoDB", "oracle": "Oracle",
+    "python": "Python", "java": "Java", "javascript": "JavaScript", "typescript": "TypeScript", 
+    "c++": "C++", "c#": "C#", "go": "Go", "rust": "Rust", "kotlin": "Kotlin", "swift": "Swift", 
+    "scala": "Scala", "bash": "Bash", "matlab": "MATLAB", "ruby": "Ruby", "php": "PHP", 
+    "perl": "Perl", "dart": "Dart", "solidity": "Solidity", "haskell": "Haskell", 
+    "pytorch": "PyTorch", "tensorflow": "TensorFlow", "keras": "Keras", "scikit-learn": "scikit-learn", 
+    "sklearn": "scikit-learn", "pandas": "Pandas", "numpy": "NumPy", "scipy": "SciPy", 
+    "matplotlib": "Matplotlib", "seaborn": "Seaborn", "opencv": "OpenCV", "nltk": "NLTK", 
+    "spacy": "spaCy", "huggingface": "Hugging Face", "transformers": "Transformers", 
+    "langchain": "LangChain", "spring boot": "Spring Boot", "spring": "Spring", 
+    "dotnet": ".NET", ".net": ".NET", "laravel": "Laravel", "ruby on rails": "Ruby on Rails", 
+    "rails": "Rails", "flutter": "Flutter", "react native": "React Native", "svelte": "Svelte", 
+    "jquery": "jQuery", "bootstrap": "Bootstrap", "tailwind": "Tailwind CSS", 
+    "tailwindcss": "Tailwind CSS", "graphql": "GraphQL", "redux": "Redux", "jest": "Jest", 
+    "pytest": "Pytest", "junit": "JUnit", "docker": "Docker", "kubernetes": "Kubernetes", 
+    "terraform": "Terraform", "github actions": "GitHub Actions", "lambda": "Lambda", 
+    "fastapi": "FastAPI", "django": "Django", "flask": "Flask", "react": "React", 
+    "next.js": "Next.js", "nextjs": "Next.js", "node.js": "Node.js", "nodejs": "Node.js", 
+    "rest api": "REST API", "microservices": "Microservices", "git": "Git", "linux": "Linux", 
+    "jupyter": "Jupyter", "mlflow": "MLflow", "wandb": "Weights & Biases", "dvc": "DVC", 
+    "onnx": "ONNX", "triton": "Triton", "vllm": "vLLM", "bert": "BERT", "gpt": "GPT", 
+    "llm": "LLM", "rag": "RAG", "embeddings": "Embeddings", "faiss": "FAISS", 
+    "vector database": "Vector Databases", "fine-tuning": "Fine-Tuning", "power bi": "Power BI",
+    "tableau": "Tableau", "api": "API", "apis": "APIs", "jira": "Jira", "confluence": "Confluence",
+    "kubernetes/eks": "Kubernetes/EKS", "ansible": "Ansible", "jenkins": "Jenkins", 
+    "sonarqube": "SonarQube", "nexus": "Nexus", "shell scripting": "Shell Scripting",
+    "devops": "DevOps", "mlops": "MLOps",
+    
+    # Extra data analyst and common skills mappings
+    "dax": "DAX", "excel": "Excel", "powerbi": "Power BI", "google cloud": "Google Cloud", 
+    "google cloud platform": "Google Cloud Platform", "github": "GitHub", "gitlab": "GitLab", 
+    "powerpoint": "PowerPoint", "word": "Word", "google analytics": "Google Analytics", 
+    "google sheets": "Google Sheets", "bi": "BI", "kpi": "KPI", "kpis": "KPIs", "seo": "SEO", 
+    "sem": "SEM", "ppc": "PPC", "roas": "ROAS", "ctr": "CTR", "cpc": "CPC", "crm": "CRM", 
+    "erp": "ERP", "hris": "HRIS", "sla": "SLA", "slas": "SLAs", "b2b": "B2B", "b2c": "B2C", 
+    "ab testing": "A/B Testing", "a/b testing": "A/B Testing", "qlik": "Qlik", 
+    "qlikview": "QlikView", "qliksense": "Qlik Sense", "sas": "SAS", "spss": "SPSS", 
+    "stata": "Stata", "r": "R", "sql server": "SQL Server", "sap": "SAP", "salesforce": "Salesforce",
+    "hubspot": "HubSpot"
+}
+
+def canonical_skill_name(s: str) -> str:
+    s = s.strip()
+    s_low = s.lower()
+    if s_low in TECH_CAPITALIZATION_MAP:
+        return TECH_CAPITALIZATION_MAP[s_low]
+    if any(c.isupper() for c in s) and not s.isupper():
+        return s
+    return s.title()
+
+

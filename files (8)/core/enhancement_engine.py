@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 
 from core.llm_backend import call_llm           # ← unified backend
-from config import OLLAMA_MODEL                 # only used in error messages
+from config import OLLAMA_MODEL, canonical_skill_name
 from core.resume_parser import ParsedResume, WorkExperience, Project, Education
 from core.jd_engine import ParsedJD
 from core.scoring_engine import ScoreResult
@@ -102,13 +102,36 @@ def _llm(prompt: str, max_tokens: int = 600) -> str:
     return call_llm(prompt, max_tokens=max_tokens)
 
 
+def clean_truncated_sentence(text: str) -> str:
+    text = text.strip()
+    if not text:
+        return ""
+        
+    TRUNCATED_SUFFIX_RE = re.compile(
+        r"\s+(and|or|with|of|to|for|in|on|at|by|the|a|an|from|as|through|during|using|about|against|along|amid|among|around|before|behind|below|beneath|beside|between|beyond|but|except|into|like|near|off|onto|out|over|past|since|under|until|up|upon|via|within|without)\b\s*$",
+        re.I
+    )
+    
+    while True:
+        original = text
+        text = re.sub(r"[\s,;:\-\–\—\\/]+$", "", text).strip()
+        text = TRUNCATED_SUFFIX_RE.sub("", text).strip()
+        if text == original:
+            break
+            
+    return text
+
+
 def _parse_bullets(text: str, max_n: int = 5) -> List[str]:
     bullets = []
     for line in text.split("\n"):
         clean = re.sub(r"^[\s\-•*\d.)]+", "", line).strip()
         if _CONTACT_RE.search(clean):
             continue
+        clean = clean_truncated_sentence(clean)
         if 15 < len(clean) < 200:
+            if clean and not clean.endswith((".", "!", "?")):
+                clean += "."
             bullets.append(clean)
         if len(bullets) >= max_n:
             break
@@ -151,7 +174,7 @@ def agent_validate_and_merge(parsed: ParsedResume, onboarding: OnboardingData) -
     for detail in onboarding.major_project_details:
         proj = Project(
             name=detail.get("name", ""),
-            tech_used=[t.strip() for t in detail.get("tech", "").split(",") if t.strip()],
+            tech_used=[canonical_skill_name(t.strip()) for t in detail.get("tech", "").split(",") if t.strip()],
             description=detail.get("description", ""),
             outcome=detail.get("outcome", ""),
             link=detail.get("link", ""),
@@ -254,8 +277,11 @@ Write a 3-sentence ATS-optimised summary. Naturally include: {", ".join(jd.must_
 Use strong action-oriented language. Do NOT invent metrics or facts not present above.
 Output ONLY the summary paragraph. No quotes, no labels."""
 
-    result = _llm(prompt, max_tokens=200)
+    result = _llm(prompt, max_tokens=300)
     result = _CONTACT_RE.sub("", result).strip()
+    result = clean_truncated_sentence(result)
+    if result and not result.endswith((".", "!", "?")):
+        result += "."
     if len(result) < 30:
         return existing or f"Experienced {jd.seniority}-level professional in {jd.domain} with skills in {', '.join(resume.skills[:5])}."
     return result
@@ -296,7 +322,7 @@ Rules:
 
 Output ONLY the rewritten bullets, one per line."""
 
-    raw = _llm(prompt, max_tokens=max_bullets * 50)
+    raw = _llm(prompt, max_tokens=512)
     return _parse_bullets(raw, max_n=max_bullets) or bullets[:max_bullets]
 
 
@@ -318,14 +344,28 @@ DESCRIPTION: [one strong sentence describing what was built and its scale/purpos
 TECH: [comma-separated tech stack, include JD keywords where genuine]
 OUTCOME: [one sentence with a measurable result or clear business impact]"""
 
-    resp   = _llm(prompt, max_tokens=200)
+    resp   = _llm(prompt, max_tokens=400)
     desc_m = re.search(r"DESCRIPTION:\s*(.+)", resp)
     tech_m = re.search(r"TECH:\s*(.+)", resp)
     out_m  = re.search(r"OUTCOME:\s*(.+)", resp)
 
-    desc    = _CONTACT_RE.sub("", desc_m.group(1).strip()) if desc_m else proj.description
-    tech    = [t.strip() for t in tech_m.group(1).split(",")] if tech_m else proj.tech_used
-    outcome = _CONTACT_RE.sub("", out_m.group(1).strip()) if out_m else proj.outcome
+    if desc_m:
+        desc = _CONTACT_RE.sub("", desc_m.group(1).strip())
+        desc = clean_truncated_sentence(desc)
+        if desc and not desc.endswith((".", "!", "?")):
+            desc += "."
+    else:
+        desc = proj.description
+
+    tech = [canonical_skill_name(t.strip()) for t in tech_m.group(1).split(",")] if tech_m else [canonical_skill_name(t) for t in proj.tech_used]
+
+    if out_m:
+        outcome = _CONTACT_RE.sub("", out_m.group(1).strip())
+        outcome = clean_truncated_sentence(outcome)
+        if outcome and not outcome.endswith((".", "!", "?")):
+            outcome += "."
+    else:
+        outcome = proj.outcome
 
     return Project(
         name=proj.name,
@@ -333,6 +373,7 @@ OUTCOME: [one sentence with a measurable result or clear business impact]"""
         tech_used=tech[:8],
         outcome=outcome,
         link=proj.link,
+        duration=getattr(proj, "duration", ""),
     )
 
 
@@ -351,7 +392,7 @@ Reasoning: if they know PyTorch → likely know NumPy; if AWS → likely know S3
 
 Return ONLY a comma-separated list of inferred skills (max 10). If none, return NONE."""
 
-    resp = _llm(prompt, max_tokens=150).strip()
+    resp = _llm(prompt, max_tokens=250).strip()
     inferable = [] if resp.upper().strip() == "NONE" else [
         s.strip() for s in resp.split(",") if s.strip() and len(s.strip()) < 40
     ]
@@ -371,7 +412,8 @@ Return ONLY a comma-separated list of inferred skills (max 10). If none, return 
     all_implicit = [k for k in jd.implicit_skills if k.lower() not in {s.lower() for s in matched + inferable_ + all_required + all_preferred}][:4]
 
     combined = matched + all_required + all_preferred + all_implicit + inferable_ + rest
-    return list(dict.fromkeys(combined))[:50]
+    combined_canonical = [canonical_skill_name(s) for s in combined]
+    return list(dict.fromkeys(combined_canonical))[:50]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -425,14 +467,14 @@ def agent_qa(enhanced: EnhancedResume, original_contact: dict) -> EnhancedResume
         if a.strip() and not _CONTACT_RE.search(a)
     ]
 
-    # ── Deduplicate skills case-insensitively ─────────────────────────────────────
     seen_s: set = set()
     deduped_skills = []
     for s in enhanced.enhanced_skills:
-        key = s.lower().strip()
+        s_cap = canonical_skill_name(s)
+        key = s_cap.lower().strip()
         if key and key not in seen_s:
             seen_s.add(key)
-            deduped_skills.append(s)
+            deduped_skills.append(s_cap)
     enhanced.enhanced_skills = deduped_skills
 
     return enhanced

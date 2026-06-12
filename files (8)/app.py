@@ -25,8 +25,8 @@ import plotly.graph_objects as go
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT))
 
-from config import ROLE_DOMAINS, LLM_BACKEND, OLLAMA_MODEL, HF_MODEL_PATH
-from core.resume_parser import parse_resume, ParsedResume
+from config import ROLE_DOMAINS, LLM_BACKEND, OLLAMA_MODEL, HF_MODEL_PATH, canonical_skill_name
+from core.resume_parser import parse_resume, ParsedResume, is_valid_certification, is_valid_accomplishment
 from core.jd_engine import parse_jd, ParsedJD
 from core.scoring_engine import score_resume, ScoreResult
 from core.enhancement_engine import enhance_resume, OnboardingData, EnhancedResume
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 # ══════════════════════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="Rozgar24x7 — AI Resume Builder",
+    page_title="Work2Hire — AI Resume Builder",
     page_icon="📄",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -70,8 +70,39 @@ st.markdown("""
 .badge-hf        { background: #fff0f6; color: #7a2a7a; border-color: #d070d0; }
 .badge-finetuned { background: #fff8e6; color: #7a5000; border-color: #e0a020; }
 
-.panel-left  { background: #fff; border-right: 1px solid #e8e6e0; padding: 18px 20px; min-height: 100vh; }
-.panel-right { background: #f0eeea; padding: 18px 20px; min-height: 100vh; }
+/* Remove default Streamlit block container padding */
+.block-container {
+  padding-top: 0rem !important;
+  padding-bottom: 0rem !important;
+  padding-left: 0rem !important;
+  padding-right: 0rem !important;
+}
+
+div[data-testid="stMainBlockContainer"] {
+  padding-top: 0rem !important;
+  padding-bottom: 0rem !important;
+  padding-left: 0rem !important;
+  padding-right: 0rem !important;
+}
+
+/* Remove spacing between topbar and columns */
+div[data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"] > .stHorizontalBlock {
+  margin-top: 0rem !important;
+}
+
+/* Style top-level layout columns directly for full height panel layout */
+div[data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"] > .stHorizontalBlock > .stColumn:nth-of-type(1) {
+  background: #fff !important;
+  border-right: 1px solid #e8e6e0 !important;
+  padding: 18px 20px !important;
+  min-height: 100vh !important;
+}
+
+div[data-testid="stMainBlockContainer"] > div[data-testid="stVerticalBlock"] > .stHorizontalBlock > .stColumn:nth-of-type(2) {
+  background: #f0eeea !important;
+  padding: 18px 20px !important;
+  min-height: 100vh !important;
+}
 
 .score-card {
   background: #fff; border-radius: 10px; border: 1px solid #e8e6e0;
@@ -142,7 +173,7 @@ _backend_label = {
 
 st.markdown(f"""
 <div class="topbar">
-  <div class="topbar-logo">R<span>24x7</span> Rozgar24x7</div>
+  <div class="topbar-logo">Work<span>2</span>Hire</div>
   <div>{_backend_label}</div>
   <div style="font-size:12px;color:#aaa">Local LLM · Zero API · Zero Cost</div>
 </div>
@@ -169,6 +200,7 @@ def _init():
         "parsed_resume":        None,
         "parsed_jd":            None,
         "score_result":         None,
+        "score_result_input":   None,
         "enhanced_resume":      None,
         "html_resume":          _blank_html(),
         "agent_log":            [],
@@ -222,6 +254,19 @@ def recalculate_sufficiency_and_background():
     from core.sufficiency_agent import evaluate_sufficiency
     bg_domain = bg["background_domain"] if bg["is_non_technical"] else ""
     st.session_state.sufficiency_report = evaluate_sufficiency(parsed, bg_domain)
+
+def ensure_input_score():
+    parsed = st.session_state.parsed_resume
+    jd = st.session_state.parsed_jd
+    if not parsed or not jd:
+        st.session_state.score_result_input = None
+        return
+    if getattr(st.session_state, "score_result_input", None) is None:
+        try:
+            st.session_state.score_result_input = score_resume(parsed, jd)
+        except Exception as e:
+            logger.error(f"Input CV scoring failed: {e}")
+            pass
 
 def _log_agent(name, status, msg=""):
     log = st.session_state.agent_log
@@ -342,17 +387,17 @@ Return ONLY the project title. Do not include quotes, labels, or extra text."""
                     if field == "description":
                         out.projects[idx].description = ans
                     elif field == "tech":
-                        out.projects[idx].tech_used = [t.strip() for t in ans.split(",") if t.strip()]
+                        out.projects[idx].tech_used = [canonical_skill_name(t.strip()) for t in ans.split(",") if t.strip()]
                     elif field == "outcome":
                         out.projects[idx].outcome = ans
         elif sec == "skills":
-            skills = [s.strip() for s in ans.split(",") if s.strip()]
+            skills = [canonical_skill_name(s.strip()) for s in ans.split(",") if s.strip()]
             out.skills = list(dict.fromkeys(out.skills + skills))
         elif sec == "certifications":
-            certs = [c.strip() for c in ans.split("\n") if c.strip()]
+            certs = [c.strip() for c in ans.split("\n") if c.strip() and is_valid_certification(c.strip())]
             out.certifications = list(dict.fromkeys(out.certifications + certs))
         elif sec == "accomplishments":
-            accs = [a.strip() for a in ans.split("\n") if a.strip()]
+            accs = [a.strip() for a in ans.split("\n") if a.strip() and is_valid_accomplishment(a.strip())]
             out.accomplishments = list(dict.fromkeys(out.accomplishments + accs))
             
     return out
@@ -386,14 +431,15 @@ def apply_edits_and_recalculate():
         if f"ed_pn_{i}" in st.session_state: er["projects"][i]["name"] = st.session_state[f"ed_pn_{i}"]
         if f"ed_pt_{i}" in st.session_state:
             tech_str = st.session_state[f"ed_pt_{i}"]
-            er["projects"][i]["tech_used"] = [t.strip() for t in tech_str.split(",") if t.strip()]
+            er["projects"][i]["tech_used"] = [canonical_skill_name(t.strip()) for t in tech_str.split(",") if t.strip()]
         if f"ed_pd_{i}" in st.session_state: er["projects"][i]["description"] = st.session_state[f"ed_pd_{i}"]
         if f"ed_po_{i}" in st.session_state: er["projects"][i]["outcome"] = st.session_state[f"ed_po_{i}"]
         if f"ed_pl_{i}" in st.session_state: er["projects"][i]["link"] = st.session_state[f"ed_pl_{i}"]
+        if f"ed_pdu_{i}" in st.session_state: er["projects"][i]["duration"] = st.session_state[f"ed_pdu_{i}"]
         
     if "ed_skills" in st.session_state:
         skills_str = st.session_state.ed_skills
-        er["skills"] = [s.strip() for s in skills_str.split(",") if s.strip()]
+        er["skills"] = [canonical_skill_name(s.strip()) for s in skills_str.split(",") if s.strip()]
         
     for i in range(len(er["education"])):
         if f"ed_ded_{i}" in st.session_state: er["education"][i]["degree"] = st.session_state[f"ed_ded_{i}"]
@@ -403,11 +449,11 @@ def apply_edits_and_recalculate():
         
     if "ed_certs" in st.session_state:
         certs_text = st.session_state.ed_certs
-        er["certifications"] = [c.strip() for c in certs_text.split("\n") if c.strip()]
+        er["certifications"] = [c.strip() for c in certs_text.split("\n") if c.strip() and is_valid_certification(c.strip())]
         
     if "ed_accs" in st.session_state:
         accs_text = st.session_state.ed_accs
-        er["accomplishments"] = [a.strip() for a in accs_text.split("\n") if a.strip()]
+        er["accomplishments"] = [a.strip() for a in accs_text.split("\n") if a.strip() and is_valid_accomplishment(a.strip())]
         
     if "ed_pubs" in st.session_state:
         pubs_text = st.session_state.ed_pubs
@@ -435,7 +481,8 @@ def apply_edits_and_recalculate():
     enh.enhanced_projects = [
         Project(
             name=p["name"], tech_used=p["tech_used"],
-            description=p["description"], outcome=p["outcome"], link=p["link"]
+            description=p["description"], outcome=p["outcome"], link=p["link"],
+            duration=p.get("duration", "")
         ) for p in er["projects"]
     ]
     enh.education = [
@@ -503,7 +550,6 @@ recalculate_sufficiency_and_background()
 col_left, col_right = st.columns([1, 1], gap="small")
 
 with col_left:
-    st.markdown('<div class="panel-left">', unsafe_allow_html=True)
 
     # ── CONTACT ──────────────────────────────────────────────────────────────
     with st.expander("📋  CONTACT", expanded=True):
@@ -531,6 +577,8 @@ with col_left:
             try:
                 parsed = parse_resume(resume_file.getvalue(), resume_file.name)
                 st.session_state.parsed_resume = parsed
+                st.session_state.score_result_input = None
+                st.session_state.score_result = None
 
                 # ── Dynamic Sufficiency & Background Check ──────────────────
                 recalculate_sufficiency_and_background()
@@ -642,7 +690,7 @@ with col_left:
         pubs_raw  = st.text_area("Publications / Research (one per line)", value=pubs_val, height=55, key="pubs_raw",
             placeholder="Title of paper — Journal/Conference, Year")
         st.session_state.onboarding.clubs_societies = [
-            l.strip() for l in clubs_raw.split("\n") if l.strip()
+            l.strip() for l in clubs_raw.split("\n") if l.strip() and is_valid_accomplishment(l.strip())
         ]
 
     # ── JD ───────────────────────────────────────────────────────────────────
@@ -663,7 +711,10 @@ with col_left:
         if jd_text and len(jd_text) > 50:
             try:
                 jd = parse_jd(jd_text, company_name=jd_company)
-                st.session_state.parsed_jd = jd
+                if getattr(st.session_state, "parsed_jd", None) != jd:
+                    st.session_state.parsed_jd = jd
+                    st.session_state.score_result_input = None
+                    st.session_state.score_result = None
                 st.success(f"✅ JD: **{jd.role_title}** | {jd.seniority} | {len(jd.all_keywords)} keywords | {jd.domain}")
                 
                 # Dynamic domain compatibility pre-check
@@ -832,7 +883,8 @@ with col_left:
                     ],
                     "projects": [
                         {"name": p.name, "tech_used": list(p.tech_used),
-                         "description": p.description, "outcome": p.outcome, "link": p.link}
+                         "description": p.description, "outcome": p.outcome, "link": p.link,
+                         "duration": getattr(p, "duration", "")}
                         for p in enh.enhanced_projects
                     ],
                     "education": [
@@ -847,28 +899,20 @@ with col_left:
 
     # ── DOWNLOAD BUTTONS ──────────────────────────────────────────────────────
     if st.session_state.enhanced_resume is not None:
-        dl1, dl2 = st.columns(2)
-        with dl1:
+        if st.session_state.pdf_bytes:
             st.download_button(
-                "⬇️ Download HTML",
-                data=st.session_state.html_resume,
-                file_name=f"{(st.session_state.enhanced_resume.name or 'resume').replace(' ','_')}_ats.html",
-                mime="text/html",
-                key="dl_html",
+                "⬇️ Download PDF",
+                data=st.session_state.pdf_bytes,
+                file_name=f"{(st.session_state.enhanced_resume.name or 'resume').replace(' ','_')}_ats.pdf",
+                mime="application/pdf",
+                key="dl_pdf",
+                use_container_width=True,
             )
-        with dl2:
-            if st.session_state.pdf_bytes:
-                st.download_button(
-                    "⬇️ Download PDF",
-                    data=st.session_state.pdf_bytes,
-                    file_name=f"{(st.session_state.enhanced_resume.name or 'resume').replace(' ','_')}_ats.pdf",
-                    mime="application/pdf",
-                    key="dl_pdf",
-                )
-            else:
-                st.caption("PDF: install `wkhtmltopdf` for PDF export")
+        else:
+            st.error("⚠️ PDF generation failed. Ensure Microsoft Edge or Google Chrome is installed on the system.")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -876,7 +920,6 @@ with col_left:
 # ══════════════════════════════════════════════════════════════════════════════
 
 with col_right:
-    st.markdown('<div class="panel-right">', unsafe_allow_html=True)
 
     # ── Real-time Recalculation Call ──────────────────────────────────────────
     if st.session_state.edit_mode and st.session_state.edit_resume:
@@ -1087,11 +1130,108 @@ with col_right:
         st.markdown("---")
 
     # ── Score dashboard ───────────────────────────────────────────────────────
+    ensure_input_score()
+    sr_opt = st.session_state.score_result
+    sr_in = st.session_state.score_result_input
+    sr = sr_opt if sr_opt else sr_in
 
-    sr: Optional[ScoreResult] = st.session_state.score_result
-    if sr:
+    if sr_opt and sr_in:
+        st.markdown("""
+        <div style="background:linear-gradient(135deg,#0ea271 0%,#0077b6 100%);
+                    border-radius:10px;padding:8px 12px;margin-bottom:12px;color:#fff">
+            <div style="font-size:13px;font-weight:800;letter-spacing:.5px;text-align:center">
+                📊 ATS SCORE COMPARISON
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            inp_pct = round(sr_in.overall_score * 100)
+            inp_color = "#ef4444" if inp_pct < 60 else ("#f59e0b" if inp_pct < 80 else "#0ea271")
+            st.markdown(f"""
+            <div style="background:#fff;border-radius:8px;border:2px solid {inp_color};
+                        padding:10px;text-align:center;margin-bottom:10px">
+                <div style="font-size:30px;font-weight:800;color:{inp_color}">{inp_pct}</div>
+                <div style="font-size:10px;font-weight:700;color:#555">Input CV ATS Score</div>
+                <div style="font-size:8px;color:#aaa;margin-top:2px">Original Uploaded File</div>
+            </div>""", unsafe_allow_html=True)
+        with sc2:
+            opt_pct = round(sr_opt.overall_score * 100)
+            opt_color = "#0ea271"
+            st.markdown(f"""
+            <div style="background:#fff;border-radius:8px;border:2px solid {opt_color};
+                        padding:10px;text-align:center;margin-bottom:10px">
+                <div style="font-size:30px;font-weight:800;color:{opt_color}">{opt_pct}</div>
+                <div style="font-size:10px;font-weight:700;color:#555">Generated CV ATS Score</div>
+                <div style="font-size:8px;color:#aaa;margin-top:2px">Optimized by Work2Hire</div>
+            </div>""", unsafe_allow_html=True)
+
+        metrics_comparison = [
+            ("ATS Keywords",    sr_in.ats_keyword_score,   sr_opt.ats_keyword_score),
+            ("Semantic Match",  sr_in.semantic_score,      sr_opt.semantic_score),
+            ("Tech Depth",      sr_in.technical_depth_score, sr_opt.technical_depth_score),
+            ("Readability",     sr_in.readability_score,    sr_opt.readability_score),
+            ("Impact",          sr_in.achievement_score,    sr_opt.achievement_score),
+        ]
+        
+        comparison_html = """
+        <table style="width:100%;font-size:11px;border-collapse:collapse;margin-bottom:15px">
+          <thead>
+            <tr style="border-bottom:1px solid #ddd;color:#666;text-align:left">
+              <th style="padding:4px">Dimension</th>
+              <th style="padding:4px;text-align:center">Input CV</th>
+              <th style="padding:4px;text-align:center">Generated CV</th>
+            </tr>
+          </thead>
+          <tbody>
+        """
+        for label, val_in, val_out in metrics_comparison:
+            pct_in = round(val_in * 100)
+            pct_out = round(val_out * 100)
+            color_in = "#ef4444" if pct_in < 60 else ("#f59e0b" if pct_in < 80 else "#0ea271")
+            color_out = "#ef4444" if pct_out < 60 else ("#f59e0b" if pct_out < 80 else "#0ea271")
+            diff = pct_out - pct_in
+            diff_badge = f'<span style="color:#0ea271;font-weight:700;font-size:9px;margin-left:3px">+{diff}%</span>' if diff > 0 else ""
+            
+            comparison_html += f"""
+            <tr style="border-bottom:1px solid #f9f9f9">
+              <td style="padding:5px;font-weight:500;color:#333">{label}</td>
+              <td style="padding:5px;text-align:center;color:{color_in};font-weight:700">{pct_in}%</td>
+              <td style="padding:5px;text-align:center;color:{color_out};font-weight:700">{pct_out}% {diff_badge}</td>
+            </tr>
+            """
+        comparison_html += "</tbody></table>"
+        st.markdown(comparison_html, unsafe_allow_html=True)
+
+        metrics_radar = [
+            ("ATS Keywords",   sr_opt.ats_keyword_score),
+            ("Semantic Match", sr_opt.semantic_score),
+            ("Tech Depth",     sr_opt.technical_depth_score),
+            ("Readability",    sr_opt.readability_score),
+            ("Impact",         sr_opt.achievement_score),
+        ]
+        fig = go.Figure(go.Scatterpolar(
+            r=[round(v*100) for _, v in metrics_radar],
+            theta=[l for l, _ in metrics_radar],
+            fill="toself",
+            fillcolor="rgba(14,162,113,0.12)",
+            line=dict(color="#0ea271", width=2),
+            marker=dict(color="#0ea271", size=5),
+        ))
+        fig.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0,100], tickfont=dict(size=9))),
+            showlegend=False,
+            margin=dict(l=30, r=30, t=20, b=20),
+            height=180,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+    elif sr:
         pct = round(sr.overall_score * 100)
         badge = _score_badge(sr.overall_score)
+        label_text = "Overall ATS Score" if sr == sr_opt else "Input CV ATS Score"
 
         dash_cols = st.columns(5)
         metrics = [
@@ -1132,7 +1272,7 @@ with col_right:
         st.markdown(f"""
         <div class="score-card" style="text-align:center;margin-bottom:8px">
           <div class="score-number">{pct}</div>
-          <div class="score-label">Overall ATS Score</div>
+          <div class="score-label">{label_text}</div>
           {badge}
         </div>""", unsafe_allow_html=True)
 
@@ -1207,7 +1347,11 @@ with col_right:
         with st.expander("🚀 Projects", expanded=False):
             for i, proj in enumerate(er["projects"]):
                 st.markdown(f"**Project {i+1}: {proj['name']}**")
-                proj["name"] = st.text_input("Project Name", value=proj["name"], key=f"ed_pn_{i}")
+                c1_p, c2_p = st.columns([2, 1])
+                with c1_p:
+                    proj["name"] = st.text_input("Project Name", value=proj["name"], key=f"ed_pn_{i}")
+                with c2_p:
+                    proj["duration"] = st.text_input("Duration", value=proj.get("duration", ""), key=f"ed_pdu_{i}")
                 tech_str = ", ".join(proj["tech_used"])
                 new_tech = st.text_input("Tech Stack (comma-separated)", value=tech_str, key=f"ed_pt_{i}")
                 proj["tech_used"] = [t.strip() for t in new_tech.split(",") if t.strip()]
@@ -1270,7 +1414,8 @@ with col_right:
             enh.enhanced_projects = [
                 Project(
                     name=p["name"], tech_used=p["tech_used"],
-                    description=p["description"], outcome=p["outcome"], link=p["link"]
+                    description=p["description"], outcome=p["outcome"], link=p["link"],
+                    duration=p.get("duration", "")
                 ) for p in er["projects"]
             ]
             enh.education = [
@@ -1294,7 +1439,7 @@ with col_right:
         )
         st.components.v1.html(st.session_state.html_resume, height=900, scrolling=True)
 
-    st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1312,14 +1457,14 @@ if generate_clicked:
     if portfolio.strip():  pr.portfolio = portfolio.strip()
 
     if skills_raw.strip():
-        manual_skills = [s.strip() for s in skills_raw.split(",") if s.strip()]
+        manual_skills = [canonical_skill_name(s.strip()) for s in skills_raw.split(",") if s.strip()]
         pr.skills = list(dict.fromkeys(manual_skills + pr.skills))
 
     if certs_raw.strip():
-        pr.certifications = [l.strip() for l in certs_raw.split("\n") if l.strip()]
+        pr.certifications = [l.strip() for l in certs_raw.split("\n") if l.strip() and is_valid_certification(l.strip())]
 
     if clubs_raw.strip():
-        pr.accomplishments = [l.strip() for l in clubs_raw.split("\n") if l.strip()]
+        pr.accomplishments = [l.strip() for l in clubs_raw.split("\n") if l.strip() and is_valid_accomplishment(l.strip())]
 
     if pubs_raw.strip():
         pr.publications = [l.strip() for l in pubs_raw.split("\n") if l.strip()]
@@ -1429,6 +1574,7 @@ if generate_clicked:
 
         score_pre = score_resume(pr_merged, jd_parsed)
         st.session_state.score_result = score_pre
+        st.session_state.score_result_input = score_pre
 
         _log_agent("Agent 2 — Validator",        "done", f"Skills={len(pr_merged.skills)}, bullets={sum(len(e.bullets) for e in pr_merged.experience)}")
         _log_agent("Agent 3 — Gap Analyst",       "run",  f"Missing={len(score_pre.missing_skills)} keywords…")

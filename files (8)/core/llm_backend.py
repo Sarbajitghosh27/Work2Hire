@@ -236,6 +236,7 @@ def _get_ft_pipeline():
 
         elif FINETUNED_ADAPTER_PATH:
             # ── LoRA / QLoRA adapter on top of base model ─────────────────
+            # pyrefly: ignore [missing-import]
             from peft import PeftModel
             logger.info(f"Loading base: {FINETUNED_BASE_MODEL}")
             tokenizer = AutoTokenizer.from_pretrained(

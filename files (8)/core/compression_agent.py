@@ -14,6 +14,28 @@ from typing import List, Dict
 from core.enhancement_engine import EnhancedResume
 from core.jd_engine import ParsedJD
 from core.scoring_engine import METRIC_RE
+from config import canonical_skill_name
+
+def check_pdf_page_count(e: EnhancedResume) -> int:
+    """Renders the HTML resume and returns the actual PDF page count using Chromium."""
+    from core.resume_generator import generate_html_resume, html_to_pdf_bytes
+    html = generate_html_resume(e)
+    # Temporarily force two-page class on the body so printing does not clip overflow,
+    # allowing us to check the actual number of pages the content spans.
+    if 'class="' in html:
+        html_for_counting = html.replace('<body class="', '<body class="two-page ')
+    else:
+        html_for_counting = html.replace('<body>', '<body class="two-page">')
+        
+    try:
+        pdf_bytes = html_to_pdf_bytes(html_for_counting)
+        import fitz
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        return doc.page_count
+    except Exception as err:
+        logger.error(f"Error in check_pdf_page_count: {err}")
+        return 1
+
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +99,14 @@ LAYOUTS = {
         "body_line_height": 1.5,
         "body_padding_top": 20, # mm
         "body_padding_bottom": 18, # mm
+        "body_padding_horizontal": 18, # mm
         "header_margin_bottom": 14, # pt
         "name_font_size": 28, # pt
         "section_margin_bottom": 14, # pt
         "section_title_font_size": 14, # pt
         "section_title_padding_bottom": 2.5, # pt
         "section_title_margin_bottom": 8.0, # pt
+        "section_title_border_width": 1.2, # pt
         "summary_font_size": 11.5, # pt
         "summary_line_height": 1.5,
         "job_margin_bottom": 11.0, # pt
@@ -99,12 +123,14 @@ LAYOUTS = {
         "body_line_height": 1.45,
         "body_padding_top": 14, # mm
         "body_padding_bottom": 12, # mm
+        "body_padding_horizontal": 16, # mm
         "header_margin_bottom": 10, # pt
         "name_font_size": 24, # pt
         "section_margin_bottom": 10, # pt
         "section_title_font_size": 12.5, # pt
         "section_title_padding_bottom": 2.0, # pt
         "section_title_margin_bottom": 6.0, # pt
+        "section_title_border_width": 1.2, # pt
         "summary_font_size": 10.8, # pt
         "summary_line_height": 1.45,
         "job_margin_bottom": 8.0, # pt
@@ -121,12 +147,14 @@ LAYOUTS = {
         "body_line_height": 1.38,
         "body_padding_top": 10, # mm
         "body_padding_bottom": 8, # mm
+        "body_padding_horizontal": 14, # mm
         "header_margin_bottom": 6.5, # pt
         "name_font_size": 22, # pt
         "section_margin_bottom": 5.5, # pt
         "section_title_font_size": 11.5, # pt
         "section_title_padding_bottom": 1.2, # pt
         "section_title_margin_bottom": 3.5, # pt
+        "section_title_border_width": 1.2, # pt
         "summary_font_size": 10.2, # pt
         "summary_line_height": 1.38,
         "job_margin_bottom": 4.5, # pt
@@ -143,12 +171,14 @@ LAYOUTS = {
         "body_line_height": 1.25,
         "body_padding_top": 6, # mm
         "body_padding_bottom": 4, # mm
+        "body_padding_horizontal": 10, # mm
         "header_margin_bottom": 4.0, # pt
         "name_font_size": 18, # pt
         "section_margin_bottom": 3.5, # pt
         "section_title_font_size": 10.5, # pt
         "section_title_padding_bottom": 0.8, # pt
         "section_title_margin_bottom": 2.0, # pt
+        "section_title_border_width": 1.2, # pt
         "summary_font_size": 9.2, # pt
         "summary_line_height": 1.25,
         "job_margin_bottom": 2.5, # pt
@@ -165,12 +195,14 @@ LAYOUTS = {
         "body_line_height": 1.15,
         "body_padding_top": 4, # mm
         "body_padding_bottom": 3, # mm
+        "body_padding_horizontal": 8, # mm
         "header_margin_bottom": 2.5, # pt
         "name_font_size": 15, # pt
         "section_margin_bottom": 2.0, # pt
         "section_title_font_size": 9.5, # pt
         "section_title_padding_bottom": 0.5, # pt
         "section_title_margin_bottom": 1.0, # pt
+        "section_title_border_width": 0.8, # pt
         "summary_font_size": 8.5, # pt
         "summary_line_height": 1.15,
         "job_margin_bottom": 1.5, # pt
@@ -184,31 +216,32 @@ LAYOUTS = {
     }
 }
 
-def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
+def estimate_resume_height(e: EnhancedResume, layout_name_or_dict) -> float:
     """Estimates the total height of the generated resume in points (pt)."""
-    p = LAYOUTS[layout_name]
+    if isinstance(layout_name_or_dict, str):
+        p = LAYOUTS[layout_name_or_dict]
+    else:
+        p = layout_name_or_dict
     MM_TO_PT = 2.83465
     
     # Padding top + bottom
     total_height = (p["body_padding_top"] + p["body_padding_bottom"]) * MM_TO_PT
     
     # Left/right padding in pt
-    lr_padding = {
-        "expanded": 18,
-        "loose": 16,
-        "normal": 14,
-        "dense": 10,
-        "super_dense": 8
-    }[layout_name]
+    lr_padding = p["body_padding_horizontal"]
     
     content_width = 595.27 - (2 * lr_padding * MM_TO_PT)
-    list_content_width = content_width - (7.0 * MM_TO_PT) # left indent of bullets is roughly 7mm
+    # Different widths based on indentation structure
+    job_bullet_width = content_width - (9.0 * MM_TO_PT)      # bullet indent (4.5mm + 2.5mm) + .job margin (2mm)
+    general_bullet_width = content_width - (7.0 * MM_TO_PT)  # bullet indent only
+    skills_content_width = content_width - (2.0 * MM_TO_PT)  # .skills-list padding-left
+
     
     # Helper to calculate lines of wrapped text with word wrap simulation
     def get_lines(text: str, font_size: float, width: float, is_bold: bool = False) -> int:
         if not text:
             return 0
-        char_width = (0.38 if is_bold else 0.33) * font_size
+        char_width = (0.44 if is_bold else 0.38) * font_size
         chars_per_line = max(12, int(width / char_width))
         total_lines = 0
         for part in text.split("\n"):
@@ -237,17 +270,27 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
     header_h += 2.0  # margin between name and contact
     
     contact_parts = []
-    if e.phone: contact_parts.append("📱 " + e.phone)
-    if e.email: contact_parts.append("✉ " + e.email)
+    import re
+    if e.phone:
+        disp_phone = re.sub(r"[^\d+\s()-]", "", e.phone).strip()
+        if disp_phone: contact_parts.append("  " + disp_phone)
+    if e.email:
+        disp_email = re.sub(r"[^\w@.+-]", "", e.email).strip()
+        if disp_email: contact_parts.append("  " + disp_email)
     if e.linkedin:
         li = e.linkedin.replace("https://","").replace("http://","").replace("www.","")
-        contact_parts.append("in " + li)
+        li = re.sub(r"^[^a-zA-Z0-9]+", "", li).strip()
+        if li.lower().startswith("in "):
+            li = li[3:].strip()
+        if li: contact_parts.append("  " + li)
     if e.github:
         gh = e.github.replace("https://","").replace("http://","").replace("www.","")
-        contact_parts.append("⌥ " + gh)
+        gh = re.sub(r"^[^a-zA-Z0-9]+", "", gh).strip()
+        if gh: contact_parts.append("  " + gh)
     if getattr(e, "portfolio", None):
         pf = e.portfolio.replace("https://","").replace("http://","").replace("www.","")
-        contact_parts.append("🔗 " + pf)
+        pf = re.sub(r"^[^a-zA-Z0-9]+", "", pf).strip()
+        if pf: contact_parts.append("  " + pf)
         
     contact_text = " | ".join(contact_parts)
     contact_lines = get_lines(contact_text, 9.8, content_width, is_bold=False)
@@ -256,7 +299,7 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
     total_height += header_h
     
     # Title height calculation
-    border_w = 0.8 if layout_name == "super_dense" else 1.2
+    border_w = p.get("section_title_border_width", 1.2)
     title_h = (p["section_title_font_size"] * 1.2) + p["section_title_padding_bottom"] + border_w + p["section_title_margin_bottom"]
     
     # Determine section rendering order
@@ -284,14 +327,14 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
                 if not title and not company:
                     continue
                 heading = f"{title} — {company}" if title and company else (title or company)
-                header_lines = get_lines(heading, p["job_title_font_size"], content_width - 120.0, is_bold=True)
-                job_h = header_lines * p["job_title_font_size"] * 1.2
+                header_lines = get_lines(heading, p["job_title_font_size"], content_width - 120.0 - (2.0 * MM_TO_PT), is_bold=True)
+                job_h = header_lines * p["job_title_font_size"] * p["body_line_height"]
                 
                 # ul margin-top is 1.5pt in CSS
                 bullets_h = 1.5
                 for b in exp.bullets:
                     if b and len(b) > 5:
-                        b_lines = get_lines(b, p["list_item_font_size"], list_content_width, is_bold=False)
+                        b_lines = get_lines(b, p["list_item_font_size"], job_bullet_width, is_bold=False)
                         bullets_h += b_lines * p["list_item_font_size"] * p["body_line_height"] + p["list_item_margin_bottom"]
                 
                 job_h += bullets_h
@@ -304,22 +347,22 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
             sec_h = title_h
             for proj in e.enhanced_projects:
                 name = proj.name or ""
-                header_lines = get_lines(name, p["job_title_font_size"], content_width - 120.0, is_bold=True)
-                proj_h = header_lines * p["job_title_font_size"] * 1.2
+                header_lines = get_lines(name, p["job_title_font_size"], content_width - 120.0 - (2.0 * MM_TO_PT), is_bold=True)
+                proj_h = header_lines * p["job_title_font_size"] * p["body_line_height"]
                 
                 if proj.tech_used:
-                    tech_str = "Tech Stack: " + ", ".join(proj.tech_used)
+                    tech_str = "Tech Stack: " + ", ".join(canonical_skill_name(t) for t in proj.tech_used if t)
                     # proj-tech has margin: 1.5pt 0; in CSS (adds 3.0pt total margin)
                     tech_lines = get_lines(tech_str, p["proj_tech_font_size"], content_width - 2 * MM_TO_PT, is_bold=False)
-                    proj_h += tech_lines * p["proj_tech_font_size"] * 1.2 + 3.0
+                    proj_h += tech_lines * p["proj_tech_font_size"] * p["body_line_height"] + 3.0
                     
                 # ul margin-top is 1.5pt in CSS
                 bullets_h = 1.5
                 if proj.description:
-                    d_lines = get_lines(proj.description, p["list_item_font_size"], list_content_width, is_bold=False)
+                    d_lines = get_lines(proj.description, p["list_item_font_size"], job_bullet_width, is_bold=False)
                     bullets_h += d_lines * p["list_item_font_size"] * p["body_line_height"] + p["list_item_margin_bottom"]
                 if proj.outcome and proj.outcome != proj.description:
-                    o_lines = get_lines(proj.outcome, p["list_item_font_size"], list_content_width, is_bold=False)
+                    o_lines = get_lines(proj.outcome, p["list_item_font_size"], job_bullet_width, is_bold=False)
                     bullets_h += o_lines * p["list_item_font_size"] * p["body_line_height"] + p["list_item_margin_bottom"]
                     
                 proj_h += bullets_h
@@ -367,12 +410,12 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
             bullets_h = 1.5
             if not rows:
                 row_text = ", ".join(skills)
-                r_lines = get_lines(row_text, p["list_item_font_size"], list_content_width, is_bold=False)
+                r_lines = get_lines(row_text, p["list_item_font_size"], skills_content_width, is_bold=False)
                 bullets_h += r_lines * p["list_item_font_size"] * p["body_line_height"]
             else:
                 for label, vals in rows:
                     row_text = f"{label}: {vals}"
-                    r_lines = get_lines(row_text, p["list_item_font_size"], list_content_width, is_bold=False)
+                    r_lines = get_lines(row_text, p["list_item_font_size"], skills_content_width, is_bold=False)
                     bullets_h += r_lines * p["list_item_font_size"] * p["body_line_height"] + p["list_item_margin_bottom"]
             sec_h += bullets_h
             sec_h += p["section_margin_bottom"]
@@ -388,7 +431,7 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
                 yr = (edu.year or "").strip()
                 gpa_str = f" — {edu.gpa}" if edu.gpa else ""
                 content = f"{deg}{gpa_str} — {inst}"
-                edu_width = content_width - 83.0
+                edu_width = content_width - 75.0 - 8.0 - (2.0 * MM_TO_PT)
                 lines = get_lines(content, p["edu_row_font_size"], edu_width, is_bold=True)
                 yr_lines = get_lines(yr, p["edu_row_font_size"], 75.0, is_bold=True)
                 max_lines = max(lines, yr_lines, 1)
@@ -401,7 +444,7 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
             bullets_h = 1.5
             for cert in e.certifications:
                 if cert and len(cert) > 3:
-                    c_lines = get_lines(cert, p["list_item_font_size"], list_content_width, is_bold=False)
+                    c_lines = get_lines(cert, p["list_item_font_size"], general_bullet_width, is_bold=False)
                     bullets_h += c_lines * p["list_item_font_size"] * p["body_line_height"] + p["list_item_margin_bottom"]
             sec_h += bullets_h
             sec_h += p["section_margin_bottom"]
@@ -412,7 +455,7 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
             bullets_h = 1.5
             for acc in e.accomplishments:
                 if acc and len(acc) > 5:
-                    a_lines = get_lines(acc, p["list_item_font_size"], list_content_width, is_bold=False)
+                    a_lines = get_lines(acc, p["list_item_font_size"], general_bullet_width, is_bold=False)
                     bullets_h += a_lines * p["list_item_font_size"] * p["body_line_height"] + p["list_item_margin_bottom"]
             sec_h += bullets_h
             sec_h += p["section_margin_bottom"]
@@ -423,14 +466,16 @@ def estimate_resume_height(e: EnhancedResume, layout_name: str) -> float:
             bullets_h = 1.5
             for pub in e.publications:
                 if pub and len(pub) > 5:
-                    p_lines = get_lines(pub, p["list_item_font_size"], list_content_width, is_bold=False)
+                    p_lines = get_lines(pub, p["list_item_font_size"], general_bullet_width, is_bold=False)
                     bullets_h += p_lines * p["list_item_font_size"] * p["body_line_height"] + p["list_item_margin_bottom"]
             sec_h += bullets_h
             sec_h += p["section_margin_bottom"]
             total_height += sec_h
 
-    # Add 10pt safety cushion to prevent page overflows due to minor rendering variations
-    return total_height + 10.0
+
+    # Add 35pt safety cushion to prevent page overflows due to minor rendering variations
+    return total_height + 35.0
+
 
 def compress_resume_internal(enhanced: EnhancedResume, jd: ParsedJD, is_two_page: bool) -> EnhancedResume:
     compressed = deepcopy(enhanced)
@@ -438,22 +483,90 @@ def compress_resume_internal(enhanced: EnhancedResume, jd: ParsedJD, is_two_page
     target_height = 1684.0 if is_two_page else 842.0
     setattr(compressed, "is_two_page", is_two_page)
     
-    def select_best_layout(e: EnhancedResume, max_h: float) -> str:
-        for layout in ["expanded", "loose", "normal", "dense", "super_dense"]:
-            h = estimate_resume_height(e, layout)
-            if h <= max_h:
-                return layout
-        return "super_dense"
-
     def finalize(e: EnhancedResume) -> EnhancedResume:
-        layout = select_best_layout(e, target_height)
-        setattr(e, "layout_style", layout)
-        setattr(e, "use_dense_spacing", layout == "dense" or layout == "super_dense")
-        logger.info(f"Compression Agent: Final layout = {layout} (estimated height = {estimate_resume_height(e, layout):.1f} pt)")
+        # Determine the layout names in order
+        layout_order = ["expanded", "loose", "normal", "dense", "super_dense"]
+        target_pages = 2 if is_two_page else 1
+        
+        # Calculate heights for all layouts
+        heights = {name: estimate_resume_height(e, name) for name in layout_order}
+        
+        # Find the best predefined layout B that fits
+        layout_B = None
+        idx_B = -1
+        for idx, name in enumerate(layout_order):
+            if heights[name] <= target_height:
+                layout_B = name
+                idx_B = idx
+                break
+                
+        if not layout_B:
+            # If nothing fits, use super_dense
+            layout_B = "super_dense"
+            idx_B = len(layout_order) - 1
+            
+        # If layout_B is expanded (the largest), no need to interpolate
+        if idx_B == 0:
+            layout_style = "expanded"
+            layout_params = LAYOUTS["expanded"]
+            estimated_h = heights["expanded"]
+        else:
+            # We can interpolate between layout_A = layout_order[idx_B - 1] and layout_B
+            layout_A = layout_order[idx_B - 1]
+            h_A = heights[layout_A]
+            h_B = heights[layout_B]
+            
+            p_A = LAYOUTS[layout_A]
+            p_B = LAYOUTS[layout_B]
+            
+            # Calculate interpolation factor t (weight for layout_A, which is the larger one)
+            # h_interp = t * h_A + (1 - t) * h_B = target_height
+            # t = (target_height - h_B) / (h_A - h_B)
+            if h_A > h_B:
+                t = (target_height - h_B) / (h_A - h_B)
+            else:
+                t = 0.0
+            t = max(0.0, min(1.0, t))
+            
+            # Interpolate and verify it fits (in case line wrap step-changes cause minor differences)
+            interpolated_params = {}
+            while t >= 0.0:
+                interpolated_params = {}
+                for k, val_B in p_B.items():
+                    val_A = p_A[k]
+                    # Linearly interpolate numeric keys
+                    interpolated_params[k] = round(t * val_A + (1 - t) * val_B, 3)
+                
+                # Verify height
+                h_est = estimate_resume_height(e, interpolated_params)
+                if h_est <= target_height:
+                    # Verify using the actual browser PDF rendering
+                    e.layout_params = interpolated_params
+                    if check_pdf_page_count(e) <= target_pages:
+                        break
+                t -= 0.05
+                
+            if t < 0.0:
+                layout_params = p_B
+                layout_style = layout_B
+                estimated_h = h_B
+            else:
+                layout_params = interpolated_params
+                layout_style = f"dynamic_{layout_A}_{layout_B}_{t:.2f}"
+                estimated_h = estimate_resume_height(e, layout_params)
+                
+        setattr(e, "layout_style", layout_B)  # keep base style name for metadata
+        setattr(e, "layout_params", layout_params)
+        setattr(e, "use_dense_spacing", layout_B == "dense" or layout_B == "super_dense")
+        logger.info(f"Compression Agent: Final layout = {layout_style} (estimated height = {estimated_h:.1f} pt)")
         return e
 
     def check_fit(e: EnhancedResume) -> bool:
-        return estimate_resume_height(e, "super_dense") <= target_height
+        est_height = estimate_resume_height(e, "super_dense")
+        if est_height > 860.0:
+            return False
+        return check_pdf_page_count(e) <= (2 if is_two_page else 1)
+
 
     # If it fits without trimming:
     if check_fit(compressed):
@@ -552,6 +665,35 @@ def compress_resume_internal(enhanced: EnhancedResume, jd: ParsedJD, is_two_page
             else:
                 break
         compressed.enhanced_summary = " ".join(truncated_sentences)
+    if check_fit(compressed): return finalize(compressed)
+
+    # --- Step 7: Clear achievements, certifications, publications if still not fitting ---
+    if not check_fit(compressed):
+        compressed.accomplishments = []
+        if check_fit(compressed): return finalize(compressed)
+    if not check_fit(compressed):
+        compressed.certifications = []
+        if check_fit(compressed): return finalize(compressed)
+    if not check_fit(compressed):
+        compressed.publications = []
+        if check_fit(compressed): return finalize(compressed)
+
+    # --- Step 8: Reduce projects to 1 ---
+    if not check_fit(compressed) and len(compressed.enhanced_projects) > 1:
+        compressed.enhanced_projects = compressed.enhanced_projects[:1]
+        if check_fit(compressed): return finalize(compressed)
+
+    # --- Step 9: Reduce experience bullets to 1 for all roles ---
+    if not check_fit(compressed):
+        for exp in compressed.enhanced_experience:
+            if len(exp.bullets) > 1:
+                exp.bullets = exp.bullets[:1]
+        if check_fit(compressed): return finalize(compressed)
+
+    # --- Step 10: Keep only top 2 experience entries ---
+    if not check_fit(compressed) and len(compressed.enhanced_experience) > 2:
+        compressed.enhanced_experience = compressed.enhanced_experience[:2]
+        if check_fit(compressed): return finalize(compressed)
     
     return finalize(compressed)
 
@@ -581,7 +723,7 @@ def compress_resume(enhanced: EnhancedResume, jd: ParsedJD, max_words: int = 540
     
     # 4. If we targeted 1 page but it still doesn't fit even under super_dense layout after max trimming,
     # fallback to 2 pages (unless force_one_page is active)
-    if not is_two_page and estimate_resume_height(compressed, "super_dense") > 842.0:
+    if not is_two_page and check_pdf_page_count(compressed) > 1:
         if force_one_page:
             logger.warning("Compression Agent: Could not fit content on 1 page under super_dense, but force_one_page is active. Staying on 1 page (will use super_dense and might clip).")
         else:
@@ -589,3 +731,4 @@ def compress_resume(enhanced: EnhancedResume, jd: ParsedJD, max_words: int = 540
             compressed = compress_resume_internal(enhanced, jd, is_two_page=True)
         
     return compressed
+

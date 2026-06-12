@@ -19,6 +19,8 @@ from typing import List, Optional
 import pdfplumber
 from docx import Document
 
+from config import canonical_skill_name
+
 logger = logging.getLogger(__name__)
 
 EMAIL_RE    = re.compile(r"[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}", re.I)
@@ -62,7 +64,7 @@ URL_RE      = re.compile(r"https?://\S+", re.I)
 METRIC_RE   = re.compile(r"\d+[\.,]?\d*\s*(%|x|X|\+|k|K|M|B|ms|sec|hrs?|users?|requests?)", re.I)
 BULLET_RE   = re.compile(r"^[\s]*[•\-\*\u2022\u25cf>]\s+(.+)$", re.M)
 _MONTH_NAME  = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*"
-_SINGLE_DATE = rf"(?:{_MONTH_NAME}[\s,]*\d{{2,4}}|\d{{4}})"
+_SINGLE_DATE = rf"(?:{_MONTH_NAME}[\s,]*\d{{2,4}}|\d{{1,2}}/\d{{2,4}}|\d{{1,2}}-\d{{2,4}}|\d{{4}})"
 _DATE_SEP    = r"\s*(?:[-–—]|to)\s*"
 _END_DATE    = rf"(?:{_SINGLE_DATE}|present|current|now)"
 DATE_RE      = re.compile(rf"\b{_SINGLE_DATE}(?:{_DATE_SEP}{_END_DATE})?\b", re.I)
@@ -98,6 +100,8 @@ class Project:
     description: str = ""
     outcome    : str = ""
     link       : str = ""
+    duration   : str = ""
+
 
 @dataclass
 class Education:
@@ -298,7 +302,7 @@ def extract_skills(skills_text: str, full_text: str) -> List[str]:
             continue
 
         seen_lower.add(key)
-        deduped.append(s_clean)
+        deduped.append(canonical_skill_name(s_clean))
     return deduped[:50]
 
 
@@ -450,7 +454,28 @@ def extract_projects(proj_text: str, skills: List[str]) -> List[Project]:
         if not title or len(title.strip()) < 5:
             return None
         proj = Project()
-        proj.name = title.strip()
+        
+        # Extract duration from project title if present
+        duration = ""
+        dm = DATE_RE.search(title)
+        if dm:
+            duration = dm.group().strip()
+            title = DATE_RE.sub("", title)
+            title = re.sub(r"\s*\(\s*\)\s*", " ", title)
+            title = re.sub(r"\s*[-–—|]\s*$", "", title)
+            title = re.sub(r"^\s*[-–—|]\s*", "", title)
+            title = title.strip().rstrip(",:")
+        else:
+            # Check first line of body for a date
+            if body:
+                first_body_line = body[0]
+                dm = DATE_RE.search(first_body_line)
+                if dm:
+                    duration = dm.group().strip()
+                    body[0] = DATE_RE.sub("", first_body_line).strip()
+                    
+        proj.name = title
+        proj.duration = duration
 
         # Tech stack: explicit "Tech Stack:" line
         for line in body:
@@ -697,6 +722,88 @@ def extract_education(edu_text: str) -> List[Education]:
     return unique
 
 
+def is_valid_certification(c: str) -> bool:
+    c_low = c.lower().strip()
+    if len(c) > 100 or len(c.split()) > 12:
+        return False
+    banned_keywords = [
+        "does not list",
+        "no certifications",
+        "no separate certifications",
+        "however, it does include",
+        "not specify certifications",
+        "not list certifications",
+        "no online courses",
+        "does not specify",
+        "no formal certifications",
+        "n/a",
+        "none",
+        "not applicable",
+        "available upon request",
+        "refer to",
+        "see project",
+        "no direct certifications",
+        "not yet certified",
+        "has not listed",
+        "does not have",
+        "not listed",
+        "no separate",
+        "no online",
+        "will be provided",
+        "explanatory text",
+        "source document",
+        "explicitly mentioned",
+        "no direct",
+        "no certifications are",
+        "refer to ",
+        "nil"
+    ]
+    for kw in banned_keywords:
+        if kw in c_low:
+            return False
+    return True
+
+
+def is_valid_accomplishment(a: str) -> bool:
+    a_low = a.lower().strip()
+    if len(a) > 150 or len(a.split()) > 20:
+        return False
+    banned_keywords = [
+        "does not list",
+        "no accomplishments",
+        "no separate accomplishments",
+        "no achievements",
+        "no awards",
+        "however, it does include",
+        "not specify accomplishments",
+        "not list accomplishments",
+        "does not specify",
+        "no formal accomplishments",
+        "no formal achievements",
+        "n/a",
+        "none",
+        "not applicable",
+        "available upon request",
+        "refer to",
+        "see project",
+        "no direct achievements",
+        "no direct accomplishments",
+        "has not listed",
+        "does not have",
+        "not listed",
+        "will be provided",
+        "explanatory text",
+        "source document",
+        "explicitly mentioned",
+        "nil"
+    ]
+    for kw in banned_keywords:
+        if kw in a_low:
+            return False
+    return True
+
+
+
 def parse_resume(file_bytes: bytes, filename: str) -> ParsedResume:
     parsed = ParsedResume()
     raw    = extract_text(file_bytes, filename)
@@ -729,11 +836,12 @@ def parse_resume(file_bytes: bytes, filename: str) -> ParsedResume:
     parsed.education      = extract_education(sanitize(sections.get("education", ""), cpat))
 
     cert_raw = sanitize(sections.get("certifications", ""), cpat)
-    parsed.certifications = [b.strip() for b in BULLET_RE.findall(cert_raw) if b.strip()] or \
-                            [l.strip() for l in cert_raw.split("\n") if l.strip() and len(l) > 5][:10]
+    raw_certs = [b.strip() for b in BULLET_RE.findall(cert_raw) if b.strip()] or \
+                [l.strip() for l in cert_raw.split("\n") if l.strip() and len(l) > 5][:10]
+    parsed.certifications = [c for c in raw_certs if is_valid_certification(c)]
 
     acc_raw = sanitize(sections.get("accomplishments", ""), cpat)
-    parsed.accomplishments = [
+    raw_accs = [
         b.strip() for b in BULLET_RE.findall(acc_raw)
         if b.strip() and not EMAIL_RE.search(b) and not LINKEDIN_RE.search(b)
     ] or [
@@ -741,9 +849,10 @@ def parse_resume(file_bytes: bytes, filename: str) -> ParsedResume:
         if l.strip() and len(l.strip()) > 15
         and not EMAIL_RE.search(l) and not LINKEDIN_RE.search(l) and not PHONE_RE.search(l)
     ]
+    parsed.accomplishments = [a for a in raw_accs if is_valid_accomplishment(a)]
 
     pub_raw = sanitize(sections.get("publications", ""), cpat)
-    parsed.publications   = [l.strip() for l in pub_raw.split("\n") if l.strip() and len(l) > 10][:8]
+    parsed.publications   = [l.strip().rstrip(":,") for l in pub_raw.split("\n") if l.strip() and len(l) > 10][:8]
 
     parsed.metrics_found  = list(set(METRIC_RE.findall(raw)))
     parsed.all_keywords   = list(set(parsed.skills))
